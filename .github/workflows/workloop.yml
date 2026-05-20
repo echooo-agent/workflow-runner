@@ -1,0 +1,99 @@
+name: Echo Workloop
+
+on:
+  schedule:
+    # Every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    # Manual trigger
+
+env:
+  GITHUB_TOKEN: ${{ secrets.ECHO_PAT }}
+  MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+  GIT_USER_NAME: echooo-agent
+  GIT_USER_EMAIL: kagura.agent.ai@gmail.com
+  TARGET_REPO: NousResearch/hermes-agent
+  MODEL: MiniMax-M2.7-highspeed
+  WORK_DIR: /tmp/echo-work
+
+jobs:
+  workloop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+
+    steps:
+      - name: Configure git
+        run: |
+          git config --global user.name "$GIT_USER_NAME"
+          git config --global user.email "$GIT_USER_EMAIL"
+          git config --global credential.helper store
+          echo "https://$GITHUB_TOKEN:@github.com" >> ~/.git-credentials
+
+      - name: Clone repos
+        run: |
+          mkdir -p $WORK_DIR
+          # Clone this workflow-runner repo
+          git clone https://github.com/echooo-agent/workflow-runner.git $WORK_DIR/workflow-runner
+          # Clone gogetajob
+          git clone https://github.com/echooo-agent/gogetajob.git $WORK_DIR/gogetajob
+          # Clone flowforge
+          git clone https://github.com/echooo-agent/flowforge.git $WORK_DIR/flowforge
+          # Clone echo-agent methodology hub
+          git clone https://github.com/alexzhu0/echo-agent.git $WORK_DIR/echo-agent
+
+      - name: Build tools
+        run: |
+          cd $WORK_DIR/gogetajob
+          npm install 2>&1 | tail -3
+          npm run build 2>&1 | tail -3
+          
+          cd $WORK_DIR/flowforge
+          npm install 2>&1 | tail -3
+          npm run build 2>&1 | tail -3
+
+      - name: Run Echo agent
+        id: agent
+        run: |
+          cd $WORK_DIR/workflow-runner
+          
+          # Set env vars for agent
+          export MINIMAX_API_KEY="$MINIMAX_API_KEY"
+          export GITHUB_TOKEN="$GITHUB_TOKEN"
+          export TARGET_REPO="$TARGET_REPO"
+          export MODEL="$MODEL"
+          export WORK_DIR="$WORK_DIR"
+          
+          echo "=== Echo agent starting ==="
+          echo "Model: $MODEL"
+          echo "Target: $TARGET_REPO"
+          
+          python3 agent.py
+          
+          echo "=== Agent run complete ==="
+
+      - name: Commit wiki updates
+        if: always()
+        run: |
+          cd $WORK_DIR/echo-agent
+          git config user.name "echooo-agent"
+          git config user.email "kagura.agent.ai@gmail.com"
+          
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No wiki changes"
+          else
+            git add -A
+            git commit -m "Workflow update: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push origin main
+            echo "Wiki updated"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "=== Echo Workloop Run ==="
+          echo "Time: $(date -u)"
+          echo "Status: ${{ job.status }}"
+          echo ""
+          echo "Echo GitHub: https://github.com/echooo-agent"
+          echo "Methodology: https://github.com/alexzhu0/echo-agent"
+          echo "Run log: https://github.com/echooo-agent/workflow-runner/actions"
